@@ -1,0 +1,7 @@
+bin/
+/remnanode
+/remnanode-*
+*.exe
+*.test
+*.out
+.DS_Store
