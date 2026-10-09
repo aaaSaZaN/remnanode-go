@@ -1,6 +1,7 @@
 package xray
 
 import (
+	"strings"
 	"fmt"
 )
 
@@ -30,9 +31,15 @@ func GenerateApiConfig(
 	// stats
 	result["stats"] = map[string]interface{}{}
 
+	apiListen := internal.XtlsApiSocketPath
+	if apiListen == "" || !strings.Contains(apiListen, ":") {
+		apiListen = "127.0.0.1:62085"
+	}
+
 	// api
 	result["api"] = map[string]interface{}{
-		"tag": "REMNAWAVE_API",
+		"tag":    "REMNAWAVE_API",
+		"listen": apiListen,
 		"services": []string{
 			"HandlerService",
 			"StatsService",
@@ -70,18 +77,8 @@ func GenerateApiConfig(
 		},
 	}
 
-	// inbounds: prepend remnawave_api_inbound
-	apiInbound := map[string]interface{}{
-		"tag":      "REMNAWAVE_API_INBOUND",
-		"listen":   "@" + internal.XtlsApiSocketPath,
-		"protocol": "dokodemo-door",
-		"settings": map[string]interface{}{
-			"address": "127.0.0.1",
-		},
-	}
-
+	// inbounds
 	var inbounds []interface{}
-	inbounds = append(inbounds, apiInbound)
 	if existingInbounds, ok := baseConfig["inbounds"].([]interface{}); ok {
 		inbounds = append(inbounds, existingInbounds...)
 	}
@@ -95,10 +92,6 @@ func GenerateApiConfig(
 
 	// routing rules
 	var rules []interface{}
-	rules = append(rules, map[string]interface{}{
-		"inboundTag":  []string{"REMNAWAVE_API_INBOUND"},
-		"outboundTag": "REMNAWAVE_API",
-	})
 
 	if existingRouting, ok := baseConfig["routing"].(map[string]interface{}); ok {
 		if existingRules, ok := existingRouting["rules"].([]interface{}); ok {

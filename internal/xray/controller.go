@@ -1,6 +1,9 @@
 package xray
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"context"
 	"encoding/json"
 	"log"
@@ -144,9 +147,11 @@ func (c *Controller) HandleStart(w http.ResponseWriter, r *http.Request) {
 
 	// pre-start socket cleanup
 	c.plugin.RunPreStart()
+	cleanupInboundSockets(fullConfig)
 
 	// stop & start xray
 	_ = c.process.Stop()
+	c.client.Close()
 	if err := c.process.Start(fullConfig); err != nil {
 		log.Printf("[XRAY] Failed to start xray: %v", err)
 		writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -164,7 +169,7 @@ func (c *Controller) HandleStart(w http.ResponseWriter, r *http.Request) {
 	// wait for xray to become ready
 	started := false
 	for attempt := 0; attempt < 30; attempt++ {
-		time.Sleep(200 * time.Millisecond)
+		time.Sleep(300 * time.Millisecond)
 		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 		_, err := c.client.GetSysStats(ctx)
 		cancel()
@@ -172,6 +177,7 @@ func (c *Controller) HandleStart(w http.ResponseWriter, r *http.Request) {
 			started = true
 			break
 		}
+		c.client.Close()
 	}
 
 	c.mu.Lock()
@@ -225,6 +231,31 @@ func (c *Controller) HandleStop(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (c *Controller) isCustomCore() bool {
+	if os.Getenv("CUSTOM_CORE") == "true" || os.Getenv("IS_CUSTOM_CORE") == "true" {
+		return true
+	}
+	if _, err := os.Stat("/usr/local/bin/xray-custom"); err == nil {
+		return true
+	}
+	if _, err := os.Stat("/usr/local/bin/.rw-core.json"); err == nil {
+		return true
+	}
+	if exe, err := os.Executable(); err == nil {
+		marker := filepath.Join(filepath.Dir(exe), ".rw-core.json")
+		if _, err := os.Stat(marker); err == nil {
+			return true
+		}
+	}
+	if c.xrayVersion != nil {
+		v := strings.ToLower(*c.xrayVersion)
+		if strings.Contains(v, "custom") || strings.Contains(v, "mod") {
+			return true
+		}
+	}
+	return false
+}
+
 func (c *Controller) HandleHealthCheck(w http.ResponseWriter, r *http.Request) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -235,6 +266,22 @@ func (c *Controller) HandleHealthCheck(w http.ResponseWriter, r *http.Request) {
 			"xrayInternalStatusCached": c.isXrayOnline,
 			"xrayVersion":              c.xrayVersion,
 			"nodeVersion":              c.nodeVersion,
+			"nodeType":                 "go",
+			"isCustomCore":             c.isCustomCore(),
+		},
+	})
+}
+
+func (c *Controller) HandleVersion(w http.ResponseWriter, r *http.Request) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"response": map[string]interface{}{
+			"nodeVersion":  c.nodeVersion,
+			"nodeType":     "go",
+			"xrayVersion":  c.xrayVersion,
+			"isCustomCore": c.isCustomCore(),
 		},
 	})
 }
@@ -243,4 +290,39 @@ func writeJSON(w http.ResponseWriter, status int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(data)
+}
+
+func cleanupInboundSockets(cfg map[string]interface{}) {
+	inbounds, ok := cfg["inbounds"].([]interface{})
+	if !ok {
+		return
+	}
+	for _, rawInb := range inbounds {
+		inbMap, ok := rawInb.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		streamSettings, ok := inbMap["streamSettings"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if ds, ok := streamSettings["dsSettings"].(map[string]interface{}); ok {
+			if p, ok := ds["path"].(string); ok && p != "" {
+				_ = os.Remove(p)
+				log.Printf("[XRAY] Pre-start cleaned domain socket: %s", p)
+			}
+		}
+		if sh, ok := streamSettings["splithttpSettings"].(map[string]interface{}); ok {
+			if p, ok := sh["path"].(string); ok && strings.HasPrefix(p, "/") {
+				_ = os.Remove(p)
+				log.Printf("[XRAY] Pre-start cleaned splithttp socket: %s", p)
+			}
+		}
+		if xh, ok := streamSettings["xhttpSettings"].(map[string]interface{}); ok {
+			if p, ok := xh["path"].(string); ok && strings.HasPrefix(p, "/") {
+				_ = os.Remove(p)
+				log.Printf("[XRAY] Pre-start cleaned xhttp socket: %s", p)
+			}
+		}
+	}
 }

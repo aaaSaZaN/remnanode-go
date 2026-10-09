@@ -355,7 +355,9 @@ func main() {
 			r.Get("/stop", xrayCtrl.HandleStop)
 			r.Get("/node-health-check", xrayCtrl.HandleHealthCheck)
 			r.Get("/healthcheck", xrayCtrl.HandleHealthCheck)
+			r.Get("/version", xrayCtrl.HandleVersion)
 		})
+		r.Get("/version", xrayCtrl.HandleVersion)
 
 		r.Route("/stats", func(r chi.Router) {
 			r.Post("/get-user-online-status", statsSvc.HandleGetUserOnlineStatus)

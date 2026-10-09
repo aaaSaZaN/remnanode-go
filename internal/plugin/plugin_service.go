@@ -91,18 +91,15 @@ func (s *Service) RunPreStart() {
 
 	for _, pattern := range files {
 		matches, err := filepath.Glob(pattern)
-		if err != nil {
-			continue
+		if err != nil || len(matches) == 0 {
+			matches = []string{pattern}
 		}
 		for _, file := range matches {
-			fi, err := os.Lstat(file)
-			if err != nil {
-				continue
-			}
-			// only remove unix socket files
-			if fi.Mode()&os.ModeSocket != 0 {
-				_ = os.Remove(file)
-				log.Printf("[PLUGIN] Pre-Start removed socket: %s", file)
+			if fi, err := os.Lstat(file); err == nil {
+				if fi.Mode()&os.ModeSocket != 0 || !fi.IsDir() {
+					_ = os.Remove(file)
+					log.Printf("[PLUGIN] Pre-Start removed socket/file: %s", file)
+				}
 			}
 		}
 	}

@@ -4,6 +4,7 @@ import (
 	"net"
 	"os"
 	"runtime"
+	"strings"
 
 	"github.com/shirou/gopsutil/v3/cpu"
 	"github.com/shirou/gopsutil/v3/host"
@@ -67,6 +68,39 @@ func GetSystemInfo() NodeSystemInfo {
 		release = hi.KernelVersion
 		hType = hi.OS
 		version = hi.PlatformVersion
+	}
+
+	if release == "" {
+		if data, err := os.ReadFile("/proc/sys/kernel/osrelease"); err == nil {
+			release = strings.TrimSpace(string(data))
+		}
+	}
+
+	if data, err := os.ReadFile("/etc/os-release"); err == nil {
+		for _, line := range strings.Split(string(data), "\n") {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "PRETTY_NAME=") {
+				pretty := strings.Trim(strings.TrimPrefix(line, "PRETTY_NAME="), "\"")
+				if pretty != "" {
+					platform = pretty
+				}
+				break
+			}
+		}
+	}
+
+	if cpuModel == "unknown" || cpuModel == "" {
+		if data, err := os.ReadFile("/proc/cpuinfo"); err == nil {
+			for _, line := range strings.Split(string(data), "\n") {
+				if strings.HasPrefix(line, "model name") {
+					parts := strings.SplitN(line, ":", 2)
+					if len(parts) == 2 {
+						cpuModel = strings.TrimSpace(parts[1])
+						break
+					}
+				}
+			}
+		}
 	}
 
 	return NodeSystemInfo{
