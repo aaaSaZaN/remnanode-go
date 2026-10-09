@@ -53,7 +53,7 @@ func NewController(
 		client:            client,
 		plugin:            plugin,
 		systemStatsGetter: systemStatsGetter,
-		nodeVersion:       "1.0.4",
+		nodeVersion:       "1.0.5",
 	}
 
 	if ver, err := process.GetCoreVersion(); err == nil && ver != "" {

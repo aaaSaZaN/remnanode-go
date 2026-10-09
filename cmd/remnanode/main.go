@@ -31,7 +31,7 @@ import (
 	"github.com/remnawave/node-go/internal/xray"
 )
 
-const AppVersion = "1.0.4"
+const AppVersion = "1.0.5"
 
 func ensureGlobalSymlinks() {
 	if os.Geteuid() != 0 {
