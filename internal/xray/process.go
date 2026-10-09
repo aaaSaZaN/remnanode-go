@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/remnawave/node-go/internal/logger"
+	"github.com/remnawave/node-go/internal/updater"
 )
 
 var versionRe = regexp.MustCompile(`(?:Xray|rw-core)\s+v?([0-9]+\.[0-9]+\.[0-9]+[a-zA-Z0-9.-]*)`)
@@ -36,6 +38,40 @@ type ProcessManager struct {
 	ringBuffer  *logger.RingBuffer
 }
 
+func FindCorePath(s6Available bool) string {
+	// In S6 Docker container, Xray is pre-baked in /usr/local/bin
+	if s6Available {
+		for _, p := range []string{"/usr/local/bin/rw-core", "/usr/local/bin/xray"} {
+			if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
+				return p
+			}
+		}
+	}
+
+	// 1. Check adjacent to remnanode binary (e.g. /opt/remnanode/rw-core or /opt/remnanode/xray)
+	if exe, err := os.Executable(); err == nil {
+		exeDir := filepath.Dir(exe)
+		for _, name := range []string{"rw-core", "xray"} {
+			p := filepath.Join(exeDir, name)
+			if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
+				return p
+			}
+		}
+	}
+
+	// 2. Check current working directory
+	for _, name := range []string{"./rw-core", "./xray"} {
+		if fi, err := os.Stat(name); err == nil && !fi.IsDir() {
+			if abs, err := filepath.Abs(name); err == nil {
+				return abs
+			}
+			return name
+		}
+	}
+
+	return ""
+}
+
 func NewProcessManager(serviceDir string, ringBuffer *logger.RingBuffer) *ProcessManager {
 	if serviceDir == "" {
 		serviceDir = "/run/service/xray"
@@ -44,12 +80,17 @@ func NewProcessManager(serviceDir string, ringBuffer *logger.RingBuffer) *Proces
 	_, err := os.Stat(controlFifo)
 	s6Available := err == nil
 
-	execPath := "/usr/local/bin/rw-core"
-	if _, err := os.Stat(execPath); err != nil {
-		if path, err := exec.LookPath("rw-core"); err == nil {
-			execPath = path
-		} else if path, err := exec.LookPath("xray"); err == nil {
-			execPath = path
+	execPath := FindCorePath(s6Available)
+	if !s6Available && execPath == "" {
+		targetDir := "."
+		if exe, err := os.Executable(); err == nil {
+			targetDir = filepath.Dir(exe)
+		}
+		targetPath := filepath.Join(targetDir, "rw-core")
+		if downloaded, err := updater.EnsureCore(targetPath); err == nil && downloaded != "" {
+			execPath = downloaded
+		} else {
+			log.Printf("[CORE] Warning: Xray core not found and auto-download failed: %v", err)
 		}
 	}
 
@@ -61,6 +102,18 @@ func NewProcessManager(serviceDir string, ringBuffer *logger.RingBuffer) *Proces
 		execPath:    execPath,
 		ringBuffer:  ringBuffer,
 	}
+}
+
+func (p *ProcessManager) GetExecPath() string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.execPath
+}
+
+func (p *ProcessManager) SetExecPath(path string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.execPath = path
 }
 
 func (p *ProcessManager) IsControlAvailable() bool {

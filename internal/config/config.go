@@ -1,8 +1,10 @@
 package config
 
 import (
+	"bufio"
 	"errors"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -33,7 +35,55 @@ func parseBool(val string, def bool) bool {
 	return def
 }
 
+// LoadEnv loads environment variables from .env files if not already set.
+func LoadEnv() {
+	candidates := []string{".env"}
+	if exe, err := os.Executable(); err == nil {
+		candidates = append(candidates, filepath.Join(filepath.Dir(exe), ".env"))
+	}
+	candidates = append(candidates, "/opt/remnanode/.env", "/etc/remnanode/.env")
+
+	seen := make(map[string]bool)
+	for _, p := range candidates {
+		abs, err := filepath.Abs(p)
+		if err != nil {
+			abs = p
+		}
+		if seen[abs] {
+			continue
+		}
+		seen[abs] = true
+
+		file, err := os.Open(abs)
+		if err != nil {
+			continue
+		}
+		scanner := bufio.NewScanner(file)
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			parts := strings.SplitN(line, "=", 2)
+			if len(parts) == 2 {
+				key := strings.TrimSpace(parts[0])
+				val := strings.TrimSpace(parts[1])
+				if (strings.HasPrefix(val, "\"") && strings.HasSuffix(val, "\"")) ||
+					(strings.HasPrefix(val, "'") && strings.HasSuffix(val, "'")) {
+					val = val[1 : len(val)-1]
+				}
+				if _, exists := os.LookupEnv(key); !exists {
+					_ = os.Setenv(key, val)
+				}
+			}
+		}
+		_ = file.Close()
+	}
+}
+
 func LoadConfig() (*Config, error) {
+	LoadEnv()
+
 	secretKey := os.Getenv("SECRET_KEY")
 	if secretKey == "" {
 		return nil, errors.New("SECRET_KEY missing in environment variables")

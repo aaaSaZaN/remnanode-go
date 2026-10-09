@@ -237,7 +237,14 @@ func main() {
 
 			if body.Type == "core" {
 				targetBinary = "rw-core"
-				destPath = "/usr/local/bin/rw-core"
+				destPath = processMgr.GetExecPath()
+				if destPath == "" {
+					if exe, err := os.Executable(); err == nil {
+						destPath = filepath.Join(filepath.Dir(exe), "rw-core")
+					} else {
+						destPath = "./rw-core"
+					}
+				}
 				if repo == "" {
 					repo = "XTLS/Xray-core"
 				}
@@ -306,6 +313,7 @@ func main() {
 			r.Post("/start", xrayCtrl.HandleStart)
 			r.Get("/stop", xrayCtrl.HandleStop)
 			r.Get("/node-health-check", xrayCtrl.HandleHealthCheck)
+			r.Get("/healthcheck", xrayCtrl.HandleHealthCheck)
 		})
 
 		r.Route("/stats", func(r chi.Router) {
@@ -368,7 +376,7 @@ func main() {
 	box := config.RenderBox(fmt.Sprintf("Remnawave Node v%s (Go)", AppVersion), []string{
 		"Docs → https://docs.rw\nCommunity → https://t.me/remnawave",
 		fmt.Sprintf("API Port: %d (mTLS TLSv1.3)", cfg.NodePort),
-		fmt.Sprintf("Xray Core: v%s\nXray Path: /usr/local/bin/rw-core", ver),
+		fmt.Sprintf("Xray Core: v%s\nXray Path: %s", ver, processMgr.GetExecPath()),
 		fmt.Sprintf("%dC, %s, %d MB RAM", sysInfo.CPUs, sysInfo.CPUModel, sysInfo.MemoryTotal/(1024*1024)),
 		fmt.Sprintf("Kernel: %s %s %s", sysInfo.Release, sysInfo.Type, sysInfo.Platform),
 		fmt.Sprintf("Network Interfaces: %v", sysInfo.NetworkInterfaces),

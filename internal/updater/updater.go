@@ -195,6 +195,9 @@ func extractZip(data []byte, binaryName, destPath string) (string, error) {
 		return "", err
 	}
 
+	destDir := filepath.Dir(destPath)
+	foundBinary := false
+
 	for _, f := range zr.File {
 		base := filepath.Base(f.Name)
 		if base == binaryName || strings.EqualFold(base, binaryName) || strings.EqualFold(base, binaryName+".exe") || (binaryName == "rw-core" && strings.EqualFold(base, "xray")) {
@@ -213,8 +216,22 @@ func extractZip(data []byte, binaryName, destPath string) (string, error) {
 			if err != nil {
 				return "", err
 			}
-			return destPath, nil
+			foundBinary = true
+		} else if strings.EqualFold(base, "geoip.dat") || strings.EqualFold(base, "geosite.dat") {
+			geoDest := filepath.Join(destDir, base)
+			if _, err := os.Stat(geoDest); err != nil {
+				if rc, err := f.Open(); err == nil {
+					if out, err := os.OpenFile(geoDest, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644); err == nil {
+						_, _ = io.Copy(out, rc)
+						_ = out.Close()
+					}
+					_ = rc.Close()
+				}
+			}
 		}
+	}
+	if foundBinary {
+		return destPath, nil
 	}
 	return "", fmt.Errorf("binary %s not found in zip archive", binaryName)
 }
@@ -307,4 +324,68 @@ func GetCurrentArch() string {
 
 func GetCurrentOS() string {
 	return runtime.GOOS
+}
+
+
+func EnsureCore(targetPath string) (string, error) {
+	if targetPath != "" {
+		if fi, err := os.Stat(targetPath); err == nil && !fi.IsDir() {
+			return targetPath, nil
+		}
+	}
+
+	repo := "XTLS/Xray-core"
+	fmt.Printf("[CORE] Xray core not found. Automatically downloading latest release from %s...\n", repo)
+
+	releases, err := FetchReleases(repo)
+	if err != nil {
+		return "", fmt.Errorf("failed to fetch releases: %w", err)
+	}
+	if len(releases) == 0 {
+		return "", fmt.Errorf("no releases found for %s", repo)
+	}
+
+	var latest *ReleaseInfo
+	for _, r := range releases {
+		if !r.Prerelease {
+			latest = &r
+			break
+		}
+	}
+	if latest == nil {
+		latest = &releases[0]
+	}
+
+	asset, err := MatchAsset(latest.Assets, GetCurrentOS(), GetCurrentArch(), "rw-core")
+	if err != nil {
+		return "", fmt.Errorf("could not find compatible asset for %s/%s: %w", GetCurrentOS(), GetCurrentArch(), err)
+	}
+
+	fmt.Printf("[CORE] Downloading %s (%s)...\n", asset.Name, latest.TagName)
+	tmpPath, err := DownloadAndSaveBinary(asset.BrowserDownloadURL, "rw-core")
+	if err != nil {
+		return "", fmt.Errorf("download failed: %w", err)
+	}
+
+	if err := ValidateCoreBinary(tmpPath); err != nil {
+		_ = os.Remove(tmpPath)
+		return "", fmt.Errorf("downloaded core failed validation: %w", err)
+	}
+
+	if targetPath == "" {
+		if exe, err := os.Executable(); err == nil {
+			targetPath = filepath.Join(filepath.Dir(exe), "rw-core")
+		} else {
+			targetPath = "./rw-core"
+		}
+	}
+
+	_ = os.MkdirAll(filepath.Dir(targetPath), 0755)
+
+	if err := AtomicReplace(tmpPath, targetPath); err != nil {
+		return "", fmt.Errorf("failed to install core to %s: %w", targetPath, err)
+	}
+
+	fmt.Printf("[CORE] Successfully installed Xray core to %s!\n", targetPath)
+	return targetPath, nil
 }

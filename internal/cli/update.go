@@ -279,7 +279,10 @@ func RunCoreCLI(args []string) {
 		os.Exit(1)
 	}
 
-	targetCorePath := "/usr/local/bin/rw-core"
+	targetCorePath := "./rw-core"
+	if exe, err := os.Executable(); err == nil {
+		targetCorePath = filepath.Join(filepath.Dir(exe), "rw-core")
+	}
 	fmt.Printf("Applying core update to %s...\n", targetCorePath)
 	if err := updater.AtomicReplace(tmpPath, targetCorePath); err != nil {
 		fmt.Fprintf(os.Stderr, "%s[ERROR]%s Failed to replace core: %v\n", colorRed, colorReset, err)
