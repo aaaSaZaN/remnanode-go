@@ -150,6 +150,24 @@ func (p *ProcessManager) Start(configMap map[string]interface{}) error {
 	}
 
 	cmd := exec.Command(p.execPath, "run", "-c", p.configPath)
+
+	assetDir := filepath.Dir(p.execPath)
+	if _, err := os.Stat(filepath.Join(assetDir, "geoip.dat")); err != nil {
+		if exe, err := os.Executable(); err == nil {
+			nodeDir := filepath.Dir(exe)
+			for _, candidate := range []string{nodeDir, "/opt/remnanode", "/opt/share/xray", "/opt/etc/xray/dat", "/usr/share/xray", "/usr/local/share/xray"} {
+				if _, err := os.Stat(filepath.Join(candidate, "geoip.dat")); err == nil {
+					assetDir = candidate
+					break
+				}
+			}
+		}
+	}
+	cmd.Env = append(os.Environ(),
+		"XRAY_LOCATION_ASSET="+assetDir,
+		"xray.location.asset="+assetDir,
+	)
+
 	if p.ringBuffer != nil {
 		cmd.Stdout = io.MultiWriter(os.Stdout, p.ringBuffer)
 		cmd.Stderr = io.MultiWriter(os.Stderr, p.ringBuffer)

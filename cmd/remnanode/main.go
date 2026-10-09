@@ -33,7 +33,42 @@ import (
 
 const AppVersion = "3.4.15"
 
+func ensureGlobalSymlinks() {
+	if os.Geteuid() != 0 {
+		return
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return
+	}
+	exe, _ = filepath.EvalSymlinks(exe)
+
+	targetDirs := []string{"/usr/local/bin"}
+	if _, err := os.Stat("/opt/bin"); err == nil {
+		targetDirs = append(targetDirs, "/opt/bin")
+	}
+
+	binaryNames := []string{"remnanode", "remnanode-go", "xlogs"}
+
+	for _, dir := range targetDirs {
+		_ = os.MkdirAll(dir, 0755)
+		for _, name := range binaryNames {
+			symlinkPath := filepath.Join(dir, name)
+			if symlinkPath == exe {
+				continue
+			}
+			target, err := os.Readlink(symlinkPath)
+			if err == nil && target == exe {
+				continue
+			}
+			_ = os.Remove(symlinkPath)
+			_ = os.Symlink(exe, symlinkPath)
+		}
+	}
+}
+
 func main() {
+	ensureGlobalSymlinks()
 	progName := filepath.Base(os.Args[0])
 	if progName == "xlogs" {
 		cli.RunLogsCLI("xray", os.Args[1:])
@@ -47,6 +82,12 @@ func main() {
 		case "logs", "nodelogs":
 			cli.RunLogsCLI("node", os.Args[2:])
 			return
+		case "status":
+			cli.RunStatusCLI(AppVersion)
+			return
+		case "restart":
+			cli.RunRestartCLI()
+			return
 		case "update":
 			cli.RunUpdateCLI(AppVersion, os.Args[2:])
 			return
@@ -57,7 +98,7 @@ func main() {
 			fmt.Printf("Remnawave Node (Go) v%s\n", AppVersion)
 			return
 		case "help", "-h", "--help":
-			fmt.Printf("Usage: %s [command]\n\nCommands:\n  xlogs [-n lines] [-f]    View Xray core logs\n  logs  [-n lines] [-f]    View Node service logs\n  update [flags]           Update Remnanode binary\n  core install [flags]     Install or update Xray core\n  version                  Show version\n", os.Args[0])
+			fmt.Printf("Usage: %s [command]\n\nCommands:\n  status                   Show node status and Xray core info\n  restart                  Restart Remnanode service\n  logs  [-n lines] [-f]    View Node service logs\n  xlogs [-n lines] [-f]    View Xray core logs\n  update [flags]           Update Remnanode binary\n  core install [flags]     Install or update Xray core\n  core update              Update Xray core to latest\n  version                  Show version\n", os.Args[0])
 			return
 		}
 	}
