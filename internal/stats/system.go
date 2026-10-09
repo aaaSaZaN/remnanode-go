@@ -121,8 +121,15 @@ func GetSystemStats(netPoller *NetworkPoller) NodeSystemStats {
 	memFree := uint64(0)
 	memUsed := uint64(0)
 	if vm, err := mem.VirtualMemory(); err == nil {
-		memFree = vm.Free
-		memUsed = vm.Used
+		if vm.Available > 0 {
+			memFree = vm.Available
+			if vm.Total > vm.Available {
+				memUsed = vm.Total - vm.Available
+			}
+		} else {
+			memFree = vm.Free
+			memUsed = vm.Used
+		}
 	}
 
 	uptime := uint64(0)
