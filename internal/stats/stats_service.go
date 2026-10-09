@@ -1,6 +1,8 @@
 package stats
 
 import (
+	"strconv"
+	"strings"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -73,7 +75,7 @@ func (s *StatsService) HandleGetSystemStats(w http.ResponseWriter, r *http.Reque
 	}
 
 	reportsCount := s.pluginSvc.TorrentBlocker.ReportsCount()
-	systemStats := GetSystemStats(s.netPoller)
+	systemCombined := GetSystemCombined(s.netPoller)
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"response": map[string]interface{}{
@@ -83,9 +85,7 @@ func (s *StatsService) HandleGetSystemStats(w http.ResponseWriter, r *http.Reque
 					"reportsCount": reportsCount,
 				},
 			},
-			"system": map[string]interface{}{
-				"stats": systemStats,
-			},
+			"system": systemCombined,
 		},
 	})
 }
@@ -257,11 +257,58 @@ func (s *StatsService) HandleGetUserIPList(w http.ResponseWriter, r *http.Reques
 	})
 }
 
+type UserIPListResponseItem struct {
+	UserID interface{}       `json:"userId"`
+	IPs    []xray.UserIPSeen `json:"ips"`
+}
+
 // getUsersIPList
 func (s *StatsService) HandleGetUsersIPList(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	users, err := s.xrayClient.GetAllOnlineUsers(ctx)
+	if err != nil || len(users) == 0 {
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"response": map[string]interface{}{
+				"users": []UserIPListResponseItem{},
+			},
+		})
+		return
+	}
+
+	onlineUserIDs := make(map[string]bool)
+	for _, raw := range users {
+		parts := strings.Split(raw, ">>>")
+		if len(parts) >= 2 {
+			onlineUserIDs[parts[1]] = true
+		} else {
+			onlineUserIDs[raw] = true
+		}
+	}
+
+	var result []UserIPListResponseItem
+	for uidStr := range onlineUserIDs {
+		ips, err := s.xrayClient.GetStatsOnlineIPList(ctx, uidStr, true)
+		if err == nil && len(ips) > 0 {
+			var uidVal interface{} = uidStr
+			if idInt, err := strconv.Atoi(uidStr); err == nil {
+				uidVal = idInt
+			}
+			result = append(result, UserIPListResponseItem{
+				UserID: uidVal,
+				IPs:    ips,
+			})
+		}
+	}
+
+	if result == nil {
+		result = []UserIPListResponseItem{}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"response": map[string]interface{}{
-			"users": []interface{}{},
+			"users": result,
 		},
 	})
 }
