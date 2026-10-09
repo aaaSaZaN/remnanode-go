@@ -171,6 +171,26 @@ LimitNOFILE=1048576
 WantedBy=multi-user.target
 EOF
 
+log_info "Подготовка геофайлов (geoip.dat, geosite.dat)..."
+mkdir -p "$INSTALL_DIR" /usr/local/share/xray
+
+if [ "$DOCKER_FOUND" = true ]; then
+    docker cp "$CONTAINER_NAME:/usr/local/share/xray/geoip.dat" "$INSTALL_DIR/geoip.dat" 2>/dev/null || true
+    docker cp "$CONTAINER_NAME:/usr/local/share/xray/geosite.dat" "$INSTALL_DIR/geosite.dat" 2>/dev/null || true
+fi
+
+if [ ! -f "$INSTALL_DIR/geoip.dat" ] || [ ! -s "$INSTALL_DIR/geoip.dat" ]; then
+    log_info "Скачивание актуального geoip.dat..."
+    curl -fsSL -o "$INSTALL_DIR/geoip.dat" https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat || true
+fi
+if [ ! -f "$INSTALL_DIR/geosite.dat" ] || [ ! -s "$INSTALL_DIR/geosite.dat" ]; then
+    log_info "Скачивание актуального geosite.dat..."
+    curl -fsSL -o "$INSTALL_DIR/geosite.dat" https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat || true
+fi
+
+[ -f "$INSTALL_DIR/geoip.dat" ] && cp -f "$INSTALL_DIR/geoip.dat" /usr/local/share/xray/geoip.dat 2>/dev/null || true
+[ -f "$INSTALL_DIR/geosite.dat" ] && cp -f "$INSTALL_DIR/geosite.dat" /usr/local/share/xray/geosite.dat 2>/dev/null || true
+
 systemctl daemon-reload
 
 WAS_RUNNING=false

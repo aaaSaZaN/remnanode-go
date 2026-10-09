@@ -288,6 +288,7 @@ func RunCoreCLI(args []string) {
 		fmt.Fprintf(os.Stderr, "%s[ERROR]%s Failed to replace core: %v\n", colorRed, colorReset, err)
 		os.Exit(1)
 	}
+	_ = updater.EnsureGeodata(filepath.Dir(targetCorePath), "/opt/remnanode", "/usr/local/share/xray")
 
 	fmt.Printf("%s[SUCCESS]%s Core updated to %s!\n", colorGreen, colorReset, chosenRelease.TagName)
 	fmt.Println("Restarting remnanode to reload core...")

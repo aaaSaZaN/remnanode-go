@@ -189,6 +189,49 @@ func DownloadAndSaveBinary(downloadURL, targetBinaryName string) (string, error)
 	return tmpPath, nil
 }
 
+func GetStandardAssetDirs(extraDirs ...string) []string {
+	dirs := []string{"/usr/local/share/xray", "/opt/remnanode", "/usr/share/xray"}
+	if exe, err := os.Executable(); err == nil {
+		dirs = append([]string{filepath.Dir(exe)}, dirs...)
+	}
+	for _, ed := range extraDirs {
+		if ed != "" {
+			dirs = append(dirs, ed)
+		}
+	}
+	seen := make(map[string]bool)
+	res := make([]string, 0, len(dirs))
+	for _, d := range dirs {
+		clean := filepath.Clean(d)
+		if !seen[clean] {
+			seen[clean] = true
+			res = append(res, clean)
+		}
+	}
+	return res
+}
+
+func CopyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+		return err
+	}
+
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	_, err = io.Copy(out, in)
+	return err
+}
+
 func extractZip(data []byte, binaryName, destPath string) (string, error) {
 	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
 	if err != nil {
@@ -218,14 +261,17 @@ func extractZip(data []byte, binaryName, destPath string) (string, error) {
 			}
 			foundBinary = true
 		} else if strings.EqualFold(base, "geoip.dat") || strings.EqualFold(base, "geosite.dat") {
-			geoDest := filepath.Join(destDir, base)
-			if _, err := os.Stat(geoDest); err != nil {
-				if rc, err := f.Open(); err == nil {
-					if out, err := os.OpenFile(geoDest, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644); err == nil {
-						_, _ = io.Copy(out, rc)
-						_ = out.Close()
+			fileName := strings.ToLower(base)
+			rc, err := f.Open()
+			if err == nil {
+				content, readErr := io.ReadAll(rc)
+				_ = rc.Close()
+				if readErr == nil && len(content) > 1024 {
+					_ = os.WriteFile(filepath.Join(destDir, fileName), content, 0644)
+					for _, d := range GetStandardAssetDirs(destDir) {
+						_ = os.MkdirAll(d, 0755)
+						_ = os.WriteFile(filepath.Join(d, fileName), content, 0644)
 					}
-					_ = rc.Close()
 				}
 			}
 		}
@@ -243,6 +289,7 @@ func extractTarGz(data []byte, binaryName, destPath string) (string, error) {
 	}
 	defer gr.Close()
 
+	destDir := filepath.Dir(destPath)
 	tr := tar.NewReader(gr)
 	for {
 		hdr, err := tr.Next()
@@ -264,6 +311,16 @@ func extractTarGz(data []byte, binaryName, destPath string) (string, error) {
 				return "", err
 			}
 			return destPath, nil
+		} else if strings.EqualFold(base, "geoip.dat") || strings.EqualFold(base, "geosite.dat") {
+			fileName := strings.ToLower(base)
+			content, readErr := io.ReadAll(tr)
+			if readErr == nil && len(content) > 1024 {
+				_ = os.WriteFile(filepath.Join(destDir, fileName), content, 0644)
+				for _, d := range GetStandardAssetDirs(destDir) {
+					_ = os.MkdirAll(d, 0755)
+					_ = os.WriteFile(filepath.Join(d, fileName), content, 0644)
+				}
+			}
 		}
 	}
 	return "", fmt.Errorf("binary %s not found in tar.gz archive", binaryName)
@@ -330,6 +387,7 @@ func GetCurrentOS() string {
 func EnsureCore(targetPath string) (string, error) {
 	if targetPath != "" {
 		if fi, err := os.Stat(targetPath); err == nil && !fi.IsDir() {
+			_ = EnsureGeodata(filepath.Dir(targetPath), "/opt/remnanode", "/usr/local/share/xray")
 			return targetPath, nil
 		}
 	}
@@ -386,6 +444,89 @@ func EnsureCore(targetPath string) (string, error) {
 		return "", fmt.Errorf("failed to install core to %s: %w", targetPath, err)
 	}
 
+	_ = EnsureGeodata(filepath.Dir(targetPath), "/opt/remnanode", "/usr/local/share/xray")
+
 	fmt.Printf("[CORE] Successfully installed Xray core to %s!\n", targetPath)
 	return targetPath, nil
+}
+
+func EnsureGeodata(targetDirs ...string) error {
+	requiredFiles := []string{"geoip.dat", "geosite.dat"}
+	allDirs := GetStandardAssetDirs(targetDirs...)
+
+	for _, reqFile := range requiredFiles {
+		var foundPath string
+		searchList := append([]string{"/tmp"}, allDirs...)
+		for _, dir := range searchList {
+			candidate := filepath.Join(dir, reqFile)
+			if fi, err := os.Stat(candidate); err == nil && fi.Size() > 1024 {
+				foundPath = candidate
+				break
+			}
+		}
+
+		if foundPath != "" {
+			for _, dir := range allDirs {
+				target := filepath.Join(dir, reqFile)
+				if target != foundPath {
+					if fi, err := os.Stat(target); err != nil || fi.Size() == 0 {
+						_ = CopyFile(foundPath, target)
+					}
+				}
+			}
+			continue
+		}
+
+		downloadURLs := []string{}
+		if reqFile == "geoip.dat" {
+			downloadURLs = []string{
+				"https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat",
+				"https://github.com/v2fly/geoip/releases/latest/download/geoip.dat",
+			}
+		} else {
+			downloadURLs = []string{
+				"https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat",
+				"https://github.com/v2fly/domain-list-community/releases/latest/download/dlc.dat",
+			}
+		}
+
+		fmt.Printf("[CORE] Geodata asset %s missing. Downloading from CDN...\n", reqFile)
+		downloaded := false
+		for _, u := range downloadURLs {
+			data, err := downloadFileBytes(u)
+			if err == nil && len(data) > 1024 {
+				for _, dir := range allDirs {
+					_ = os.MkdirAll(dir, 0755)
+					_ = os.WriteFile(filepath.Join(dir, reqFile), data, 0644)
+				}
+				fmt.Printf("[CORE] Successfully installed %s (%d bytes).\n", reqFile, len(data))
+				downloaded = true
+				break
+			}
+		}
+		if !downloaded {
+			fmt.Printf("[CORE] Warning: Failed to download %s from all sources.\n", reqFile)
+		}
+	}
+	return nil
+}
+
+func downloadFileBytes(url string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", "Remnanode-Geodata-Downloader")
+	client := &http.Client{Timeout: 2 * time.Minute}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	return io.ReadAll(resp.Body)
 }
